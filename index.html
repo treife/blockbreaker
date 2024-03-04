@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<title>Blockbreaker</title>
+
+		<style>
+			body {
+				background-color: black;
+			}
+
+			#cv {
+				width: 95%;
+				height: 95%;
+
+				border: 2px solid #555555ff;
+			}
+		</style>
+	</head>
+	<body>
+		<div style="text-align: center;">
+			<canvas id="cv"></canvas>
+		</div>
+
+		<script>
+			class Vec {
+				constructor(x, y) {
+					this.x = x
+					this.y = y
+				}
+			}
+
+			// In the range of 0-1
+			let ballPos = null
+			let ballVelocity = null
+			let ballSpeed = null
+			const BALL_SIZE = 0.008
+
+			let platformPos = null
+			let platformWidth = null
+			let platformSpeed = null
+			let platformVelocity = null
+			const PLATFORM_HEIGHT = 0.027
+
+			const NUM_BLOCKS_IN_ROW = 8
+			const NUM_ROWS = 5
+			const TOP_BLOCK_OFFSET = 2
+			let blockState = new Array(NUM_BLOCKS_IN_ROW * NUM_ROWS)
+
+			let numRetries = null
+			let score = null
+			let highScore = localStorage.getItem('highScore')
+			let showingHelp = false
+			let gameState = 'awaitingStart'
+
+			function launchBall() {
+				ballSpeed = 0.0008
+				ballPos = new Vec(platformPos.x + platformWidth / 2, platformPos.y - BALL_SIZE * 2.0)
+
+				// 50/50 chances for the ball to launch into left/right direction
+				if (Math.random() < 0.5)
+					ballVelocity = new Vec(0.45, -0.45)
+				else
+					ballVelocity = new Vec(-0.45, -0.45)
+			}
+
+			function startGame() {
+				platformPos = new Vec(0.5 - platformWidth / 2, 0.9)
+				platformWidth = 0.15
+				platformSpeed = 0.0005
+				platformVelocity = new Vec(0, 0)
+				
+				launchBall()				
+
+				blockState.fill(true)
+
+				numRetries = 3
+				score = 0
+			}
+
+			let canvas = document.getElementById('cv')
+			let ctx = canvas.getContext('2d')
+
+			function fillTextCentered(text, x, y) {
+				const metrics = ctx.measureText(text)
+				const height = metrics.actualBoundingBoxAscent + metrics.actualBoundingBoxDescent
+				ctx.fillText(text, x - metrics.width / 2, y + height / 2)
+			}
+
+			function fillTextMultiline(text, x, y, centered=false) {
+				const lines = text.split('\n')
+				let curY = y
+				for (let ln of lines) {
+					const metrics = ctx.measureText(ln)
+					const height = metrics.actualBoundingBoxAscent + metrics.actualBoundingBoxDescent
+
+					const lnX = centered ? x - metrics.width / 2 : x
+					ctx.fillText(ln, lnX, curY)
+
+					curY += height + height / 3
+				}
+			}
+
+			let lastTime = null
+			let desiredFrametime = 1000 / 45
+			function tick(now) {
+				if (!lastTime)
+					lastTime = now
+				const deltaTime = now - lastTime
+
+				if (deltaTime < desiredFrametime) {
+					requestAnimationFrame(tick, canvas)
+					return
+				}
+				lastTime = now
+
+				ctx.fillStyle = '#111111ff'
+				ctx.fillRect(0, 0, canvas.width, canvas.height)
+
+				if (showingHelp) {
+					ctx.font = '36px Verdana'
+					ctx.fillStyle = '#888888ff'
+					fillTextCentered('Blockbreaker', canvas.width / 2, 46)
+					fillTextMultiline('Keyboard\nSPACE - Pause/Resume\nR - Restart\nH - Help', canvas.width / 5, 106)
+					requestAnimationFrame(tick, canvas)
+					return
+				}
+				else if (gameState == 'awaitingStart') {
+					ctx.font = '48px Verdana'
+					ctx.fillStyle = '#555555ff'
+					fillTextCentered('Press SPACE to play', canvas.width / 2, canvas.height / 2 - 48)
+					fillTextCentered('Hit H for help', canvas.width / 2, canvas.height / 2 + 48)
+					requestAnimationFrame(tick, canvas)
+					return
+				}
+				else if (gameState == 'paused') {
+					ctx.font = '48px Verdana'
+					ctx.fillStyle = '#555555ff'
+					fillTextCentered('Press SPACE to resume', canvas.width / 2, canvas.height / 2)
+					requestAnimationFrame(tick, canvas)
+					return
+				}
+				else if (gameState == 'ended') {
+					ctx.font = '48px Verdana'
+					ctx.fillStyle = '#555555ff'
+					const fourth = canvas.width / 4
+					fillTextCentered(`Score: ${score}`, fourth, canvas.height / 2)
+					fillTextCentered(`High: ${score}`, fourth * 3, canvas.height / 2)
+					fillTextCentered(`Press SPACE to play`, canvas.width / 2, (canvas.height / 3) * 2)
+					requestAnimationFrame(tick, canvas)
+					return
+				}
+
+				platformPos.x = platformPos.x + platformSpeed * platformVelocity.x * deltaTime
+				// Clamp position of the platform to screen area
+				platformPos.x = Math.min(Math.max(platformPos.x, 0.0), 1.0 - platformWidth)
+
+				ballPos = new Vec(
+					ballPos.x + ballSpeed * ballVelocity.x * deltaTime,
+					ballPos.y + ballSpeed * ballVelocity.y * deltaTime
+				)
+
+				if (ballPos.x + BALL_SIZE > platformPos.x &&
+					ballPos.x - BALL_SIZE < platformPos.x + platformWidth &&
+					ballPos.y + BALL_SIZE > platformPos.y &&
+					ballPos.y - BALL_SIZE < platformPos.y + PLATFORM_HEIGHT) {
+					if (ballVelocity.y > 0)
+						ballVelocity.y = -ballVelocity.y
+				}
+
+				if (ballPos.x - BALL_SIZE < 0 && ballVelocity.x < 0)
+					ballVelocity.x = -ballVelocity.x
+				if (ballPos.y - BALL_SIZE < 0 && ballVelocity.y < 0)
+					ballVelocity.y = -ballVelocity.y
+				if (ballPos.x + BALL_SIZE > 1.0 && ballVelocity.x > 0)
+					ballVelocity.x = -ballVelocity.x
+
+				// The ball hit the bottom
+				if (ballPos.y > 1.0) {
+					if (numRetries > 1) {
+						--numRetries
+						launchBall()
+					}
+					else {
+						gameState = 'ended'
+
+						if (!highScore || score > highScore) {
+							highScore = score
+							localStorage.setItem('highScore', highScore)
+						}
+					}
+				}
+
+				const blockSpacing = 2
+				const blockWidth = canvas.width / NUM_BLOCKS_IN_ROW - blockSpacing - (blockSpacing / NUM_BLOCKS_IN_ROW)
+				const blockHeight = canvas.height / 3 / NUM_ROWS
+				let hitBlock = false
+				for (let yi = 0; yi < NUM_ROWS; yi++) {
+					for (let xi = 0; xi < NUM_BLOCKS_IN_ROW; xi++) {
+						const stateIndex = yi * NUM_BLOCKS_IN_ROW + xi
+						if (!blockState[stateIndex])
+							continue
+
+						const x = xi * blockWidth + (xi+1) * blockSpacing
+						const y = (TOP_BLOCK_OFFSET + yi) * blockHeight + (yi+1) * blockSpacing
+
+						let color = 0xffffffff
+						switch (yi) {
+						case 0: color = 'orange'; break
+						case 1: color = 'blue'; break
+						case 2: color = 'purple'; break
+						case 3: color = 'red'; break
+						case 4: color = 'green'; break
+						default: color = '#555555ff'; break
+						}
+
+						const screenBallPos = new Vec(ballPos.x * canvas.width, ballPos.y * canvas.height)
+						const screenBallSize = BALL_SIZE * canvas.width
+						// A block is hit by the ball
+						if (screenBallPos.y - screenBallSize <= y + blockHeight &&
+							screenBallPos.x + screenBallSize >= x &&
+							screenBallPos.y + screenBallSize >= y &&
+							screenBallPos.x - screenBallSize <= x + blockWidth &&
+							!hitBlock) {
+							hitBlock = true
+
+							const leftDist = Math.abs(screenBallPos.x + screenBallSize - x)
+							const rightDist = Math.abs(screenBallPos.x - screenBallSize - (x + blockWidth))
+							const topDist = Math.abs(screenBallPos.y + screenBallSize - y)
+							const bottomDist = Math.abs(screenBallPos.y - screenBallSize - (y + blockHeight))
+
+							if (leftDist < Math.min(Math.min(rightDist, topDist), bottomDist) &&
+								ballVelocity.x > 0) {
+								ballVelocity.x = -ballVelocity.x
+							}
+							else if (rightDist < Math.min(Math.min(leftDist, topDist), bottomDist) &&
+									 ballVelocity.x < 0) {
+								ballVelocity.x = -ballVelocity.x
+							}
+							else if (topDist < Math.min(Math.min(rightDist, leftDist), bottomDist) &&
+									 ballVelocity.y > 0) {
+								ballVelocity.y = -ballVelocity.y
+							}
+							else if (bottomDist < Math.min(Math.min(rightDist, leftDist), topDist) &&
+									 ballVelocity.y < 0) {
+								ballVelocity.y = -ballVelocity.y
+							}
+
+							platformWidth -= 0.0001
+							ballSpeed += 0.0001
+
+							blockState[stateIndex] = false
+
+							score += 50
+
+							if (blockState.filter(v => v).length == 0) {
+								// All the blocks were broken. We reset them and continue the game.
+								blockState.fill(true)
+								// Launch the ball from the platform so it doesn't get stuck over the top layer
+								launchBall()
+
+								score += 1000
+							}
+						}
+
+						// ctx.shadowBlur = 7
+						// ctx.shadowColor = color
+						ctx.fillStyle = color
+						ctx.fillRect(x, y, blockWidth, blockHeight)
+						// ctx.shadowBlur = 0
+					}
+				}
+
+				ctx.fillStyle = '#555555ff'
+				ctx.fillRect(platformPos.x * canvas.width, platformPos.y * canvas.height,
+					platformWidth * canvas.width, PLATFORM_HEIGHT * canvas.height)
+
+				ctx.beginPath()
+				ctx.fillStyle = '#777777ff'
+				ctx.arc(ballPos.x * canvas.width, ballPos.y * canvas.height, BALL_SIZE * canvas.width, 0, 2 * Math.PI, false)
+				ctx.fill()
+				ctx.lineWidth = 2
+				ctx.strokeStyle = '#595959ff'
+				ctx.stroke()
+
+				const infoX = canvas.width / 102.4
+				ctx.font = 'bold 24px Verdana'
+				ctx.fillStyle = '#555555ff'
+
+				const scoreText = `Score: ${score}`
+				const scoreTextMetrics = ctx.measureText(scoreText)
+				ctx.fillText(scoreText, infoX, canvas.height / 22.88)
+
+				if (highScore)
+					ctx.fillText(`High: ${highScore}`, infoX + scoreTextMetrics.width + 8, canvas.height / 22.88)
+
+				ctx.font = '36px Verdana'
+				ctx.fillStyle = '#881111ff'
+				ctx.fillText('♥'.repeat(numRetries), infoX, canvas.height / 11.61)
+
+				requestAnimationFrame(tick, canvas)
+			}
+
+			function updateViewportSize() {
+				canvas.width = window.innerWidth
+				canvas.height = window.innerHeight
+			}
+			updateViewportSize()
+			window.addEventListener('resize', updateViewportSize)
+
+			function onKeydown(ev) {
+				if (ev.keyCode == 37) // Left arrow
+					platformVelocity.x = -1.0
+				else if (ev.keyCode == 39) // Right arrow
+					platformVelocity.x = 1.0
+			}
+			function onKeyup(ev) {
+				// Don't stop the platform running right when left arrow is depressed and vice versa
+				if (ev.keyCode == 37 && platformVelocity.x < 0.0) // Left arrow
+					platformVelocity.x = 0.0
+				else if (ev.keyCode == 39 && platformVelocity.x > 0.0) // Right arrow
+					platformVelocity.x = 0.0
+				else if (ev.keyCode == 82) // Hit 'R' anytime to restart
+					startGame()
+				else if (ev.keyCode == 72) // H
+					showingHelp = !showingHelp
+				else if (ev.keyCode == 32) { // Space
+					if (gameState == 'awaitingStart') {
+						gameState = 'ingame'
+						startGame()
+					}
+					else if (gameState == 'ingame') {
+						gameState = 'paused'
+					}
+					else if (gameState == 'paused') {
+						gameState = 'ingame'
+					}
+					else if (gameState == 'ended') {
+						gameState = 'ingame'
+						startGame()
+					}
+				}
+			}
+			window.addEventListener('keydown', onKeydown)
+			window.addEventListener('keyup', onKeyup)
+
+			window.addEventListener('mousemove', ev => {
+				const bb = canvas.getBoundingClientRect()
+				platformPos.x = (ev.clientX - bb.left) / canvas.width
+				// ballPos.x = ev.clientX / canvas.width
+				// ballPos.y = ev.clientY / canvas.height
+			})
+
+			window.addEventListener('beforeunload', () => {
+				localStorage.setItem('highScore', highScore)
+			})
+
+			startGame()
+			requestAnimationFrame(tick, canvas)
+		</script>
+	</body>
+</html>
